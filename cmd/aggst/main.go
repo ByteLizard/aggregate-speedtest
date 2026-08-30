@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 
 	"aggregate-speedtest/internal/ookla"
@@ -96,10 +97,31 @@ func bandwidth(section map[string]any) (float64, bool) {
 	return gbps(bw), ok
 }
 
+// cliError extracts the human-readable message from the Ookla CLI's stderr
+// (its errors, like the per-IP rate limit, otherwise surface as bare exit
+// codes).
+func cliError(stderr string) string {
+	for _, line := range strings.Split(stderr, "\n") {
+		if _, msg, ok := strings.Cut(line, "[error] "); ok {
+			return strings.TrimSpace(msg)
+		}
+	}
+	if s := strings.TrimSpace(stderr); s != "" {
+		return s
+	}
+	return ""
+}
+
 // nearestServers auto-picks the n closest servers from the CLI's list.
 func nearestServers(cli string, n int) ([]int, error) {
-	out, err := exec.Command(cli, "-L", "-f", "json", "--accept-license", "--accept-gdpr").Output()
+	cmd := exec.Command(cli, "-L", "-f", "json", "--accept-license", "--accept-gdpr")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
+		if e := cliError(stderr.String()); e != "" {
+			return nil, fmt.Errorf("%s", e)
+		}
 		return nil, err
 	}
 	var parsed struct {
@@ -190,6 +212,8 @@ func main() {
 			defer wg.Done()
 			cmd := exec.Command(cli, "-s", strconv.Itoa(id), "-f", "jsonl",
 				"--accept-license", "--accept-gdpr")
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
 			stdout, err := cmd.StdoutPipe()
 			if err == nil {
 				err = cmd.Start()
@@ -209,9 +233,13 @@ func main() {
 				}
 			}
 			if err := cmd.Wait(); err != nil {
+				msg := err.Error()
+				if e := cliError(stderr.String()); e != "" {
+					msg = e // e.g. Ookla's per-IP rate limit ("Limit reached")
+				}
 				t.mu.Lock()
 				if _, ok := t.finals[id]; !ok {
-					t.finals[id] = result{name: "#" + strconv.Itoa(id), err: err.Error()}
+					t.finals[id] = result{name: "#" + strconv.Itoa(id), err: msg}
 				}
 				t.mu.Unlock()
 			}
