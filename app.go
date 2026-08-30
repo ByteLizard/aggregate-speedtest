@@ -81,7 +81,9 @@ func (a *App) CLIStatus() map[string]any {
 	if err != nil {
 		return map[string]any{"present": false, "error": err.Error()}
 	}
-	out, err := exec.Command(p, "--version").Output()
+	cmd := exec.Command(p, "--version")
+	hideConsole(cmd)
+	out, err := cmd.Output()
 	if err != nil {
 		return map[string]any{"present": false}
 	}
@@ -127,7 +129,9 @@ func (a *App) InstallCLI() (map[string]any, error) {
 	if runtime.GOOS == "windows" {
 		member = "speedtest.exe"
 	}
-	if out, err := exec.Command("tar", "-xf", archive, "-C", dir, member).CombinedOutput(); err != nil {
+	tarCmd := exec.Command("tar", "-xf", archive, "-C", dir, member)
+	hideConsole(tarCmd)
+	if out, err := tarCmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("extract: %v: %s", err, out)
 	}
 	p, _ := cliPath()
@@ -150,7 +154,9 @@ func (a *App) NearbyServers() ([]Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := exec.Command(p, "-L", "-f", "json", "--accept-license", "--accept-gdpr").Output()
+	cmd := exec.Command(p, "-L", "-f", "json", "--accept-license", "--accept-gdpr")
+	hideConsole(cmd)
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("server list: %w", err)
 	}
@@ -194,6 +200,7 @@ func (a *App) Run(ids []int) error {
 	for _, id := range ids {
 		cmd := exec.Command(p, "-s", strconv.Itoa(id), "-f", "jsonl",
 			"--accept-license", "--accept-gdpr")
+		hideConsole(cmd)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			continue

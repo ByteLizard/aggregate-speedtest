@@ -27,12 +27,25 @@ bundled Chromium.
 
 ## Install / run
 
-Requires [Go](https://go.dev) and the [Wails CLI](https://wails.io/docs/gettingstarted/installation):
+**Download a build from [Releases](https://github.com/ByteLizard/aggregate-speedtest/releases)** —
+macOS (universal), Windows (x64), and Linux (x64) binaries are built by CI on
+every tagged release.
+
+Platform notes:
+- **macOS**: the app is unsigned — first launch needs right-click → Open (or
+  `xattr -dr com.apple.quarantine` on the .app).
+- **Windows**: needs the WebView2 runtime (preinstalled on Windows 11 and
+  up-to-date Windows 10).
+- **Linux**: needs `webkit2gtk-4.1` and GTK3 (present on any recent desktop
+  distro).
+
+Or build from source with [Go](https://go.dev) and the
+[Wails CLI](https://wails.io/docs/gettingstarted/installation):
 
 ```
 git clone https://github.com/ByteLizard/aggregate-speedtest
 cd aggregate-speedtest
-wails build
+wails build          # add -tags webkit2_41 on distros with webkit2gtk 4.1
 ```
 
 The binary lands in `build/bin/`. Or `wails dev` to hack on it.
