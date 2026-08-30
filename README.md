@@ -58,6 +58,30 @@ bundled — it's Ookla's proprietary binary). Using it means accepting
 [Privacy Policy](https://www.speedtest.net/about/privacy); the app passes
 `--accept-license --accept-gdpr` on your behalf after you confirm.
 
+## Headless CLI: `aggst`
+
+The same measurement without the GUI — a single static binary for servers,
+routers, and scripts (also on the Releases page: `aggst-<os>-<arch>`):
+
+```
+aggst -list              # nearby server ids
+aggst 57176 6214 10148   # parallel legs against those servers
+```
+
+It streams a live ticker on a terminal and prints per-leg finals plus the
+**peak concurrent** aggregate. Same first-run Ookla CLI download and license
+acceptance as the app (it also picks up a `speedtest` already on `$PATH`).
+
+## Methodology: peak concurrent, not summed averages
+
+Adding per-leg *results* together is subtly wrong: legs' download phases don't
+stay aligned, so the sum mixes rates measured over different time windows and
+double-counts — it can exceed the physical wire. Both the app and `aggst`
+instead track the sum of **instantaneous** per-leg rates (a leg that has moved
+on or finished contributes zero) and report that sum's **peak**: the most your
+line demonstrably carried at one real moment. It can never exceed reality, and
+it slightly under-counts if legs never fully overlap — a floor, not a brag.
+
 ## How it works
 
 1. The Go backend downloads/locates the Ookla CLI (stored in your OS config

@@ -6,14 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+
+	"aggregate-speedtest/internal/ookla"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -32,54 +30,11 @@ func (a *App) startup(ctx context.Context) { a.ctx = ctx }
 
 // ---- Ookla CLI management ---------------------------------------------------
 
-const ooklaVersion = "1.2.0"
-
-func cliDownloadURL() (string, error) {
-	base := "https://install.speedtest.net/app/cli/ookla-speedtest-" + ooklaVersion
-	switch runtime.GOOS {
-	case "darwin":
-		return base + "-macosx-universal.tgz", nil
-	case "linux":
-		switch runtime.GOARCH {
-		case "amd64":
-			return base + "-linux-x86_64.tgz", nil
-		case "arm64":
-			return base + "-linux-aarch64.tgz", nil
-		}
-	case "windows":
-		if runtime.GOARCH == "amd64" {
-			return base + "-win64.zip", nil
-		}
-	}
-	return "", fmt.Errorf("no Ookla CLI build for %s/%s", runtime.GOOS, runtime.GOARCH)
-}
-
-func cliDir() (string, error) {
-	cfg, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(cfg, "aggregate-speedtest")
-	return dir, os.MkdirAll(dir, 0o755)
-}
-
-func cliPath() (string, error) {
-	dir, err := cliDir()
-	if err != nil {
-		return "", err
-	}
-	name := "speedtest"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	return filepath.Join(dir, name), nil
-}
-
 // CLIStatus reports whether the Ookla CLI is present and its version.
 func (a *App) CLIStatus() map[string]any {
-	p, err := cliPath()
-	if err != nil {
-		return map[string]any{"present": false, "error": err.Error()}
+	p := ookla.Find()
+	if p == "" {
+		return map[string]any{"present": false}
 	}
 	cmd := exec.Command(p, "--version")
 	hideConsole(cmd)
@@ -95,47 +50,9 @@ func (a *App) CLIStatus() map[string]any {
 // the user Ookla's license terms first — running the CLI passes
 // --accept-license/--accept-gdpr on their behalf.
 func (a *App) InstallCLI() (map[string]any, error) {
-	url, err := cliDownloadURL()
-	if err != nil {
+	if _, err := ookla.Install(); err != nil {
 		return nil, err
 	}
-	dir, err := cliDir()
-	if err != nil {
-		return nil, err
-	}
-	archive := filepath.Join(dir, filepath.Base(url))
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("download: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("download: HTTP %d from %s", resp.StatusCode, url)
-	}
-	f, err := os.Create(archive)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		return nil, err
-	}
-	f.Close()
-	defer os.Remove(archive)
-
-	// tar handles both .tgz and .zip on every OS this app targets
-	// (bsdtar on macOS/Windows 10+, GNU tar on Linux).
-	member := "speedtest"
-	if runtime.GOOS == "windows" {
-		member = "speedtest.exe"
-	}
-	tarCmd := exec.Command("tar", "-xf", archive, "-C", dir, member)
-	hideConsole(tarCmd)
-	if out, err := tarCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("extract: %v: %s", err, out)
-	}
-	p, _ := cliPath()
-	_ = os.Chmod(p, 0o755)
 	return a.CLIStatus(), nil
 }
 
@@ -150,9 +67,9 @@ type Server struct {
 
 // NearbyServers asks the CLI for the closest test servers.
 func (a *App) NearbyServers() ([]Server, error) {
-	p, err := cliPath()
-	if err != nil {
-		return nil, err
+	p := ookla.Find()
+	if p == "" {
+		return nil, fmt.Errorf("Ookla CLI not installed")
 	}
 	cmd := exec.Command(p, "-L", "-f", "json", "--accept-license", "--accept-gdpr")
 	hideConsole(cmd)
@@ -188,12 +105,12 @@ func (a *App) Run(ids []int) error {
 	a.cmds = nil
 	a.mu.Unlock()
 
-	p, err := cliPath()
-	if err != nil {
+	p := ookla.Find()
+	if p == "" {
 		a.mu.Lock()
 		a.running = false
 		a.mu.Unlock()
-		return err
+		return fmt.Errorf("Ookla CLI not installed")
 	}
 
 	var wg sync.WaitGroup
