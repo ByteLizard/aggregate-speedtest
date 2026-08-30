@@ -43,18 +43,20 @@ app.innerHTML = `
       <button id="stop-btn" hidden>Stop</button>
     </div>
     <div id="aggregate" hidden>
-      <div class="agg-item"><span class="agg-label">↓ aggregate</span><span id="agg-down" class="agg-val">0.00</span><span class="agg-unit">Gbps</span></div>
-      <div class="agg-item"><span class="agg-label">↑ aggregate</span><span id="agg-up" class="agg-val">0.00</span><span class="agg-unit">Gbps</span></div>
+      <div class="agg-item"><span class="agg-label" id="agg-down-label">↓ live sum</span><span id="agg-down" class="agg-val">0.00</span><span class="agg-unit">Gbps</span></div>
+      <div class="agg-item"><span class="agg-label" id="agg-up-label">↑ live sum</span><span id="agg-up" class="agg-val">0.00</span><span class="agg-unit">Gbps</span></div>
     </div>
     <div id="legs"></div>
-    <p class="fine" id="run-note" hidden>Download phases rarely align perfectly across legs —
-    the <strong>upload sum</strong> is the trustworthy aggregate; treat the download sum as a floor.</p>
+    <p class="fine" id="run-note" hidden>The aggregate is the <strong>peak concurrent sum</strong> —
+    the highest the legs' instantaneous rates ever summed to at one moment. Unlike adding per-leg
+    averages (whose phases don't align), it can never exceed what your line actually carried.</p>
   </section>
 `;
 
 const $ = (id) => document.getElementById(id);
 const selected = new Map(); // id -> label
-const legs = new Map();     // id -> {down, up, done, name}
+const legs = new Map();     // id -> {curDown, curUp, finalDown, finalUp, done, name}
+let peakDown = 0, peakUp = 0;
 
 function gbps(bytesPerSec) { return (bytesPerSec * 8) / 1e9; }
 function fmt(v) { return v.toFixed(2); }
@@ -120,31 +122,50 @@ $('add-btn').onclick = () => {
   if (v) { addServer(v, `#${v}`); $('manual-id').value = ''; }
 };
 
-function renderLegs() {
+function renderLegs(final = false) {
   let down = 0, up = 0;
   const rows = [...legs.entries()].map(([id, l]) => {
-    down += l.down; up += l.up;
+    down += l.curDown; up += l.curUp;
+    const showDown = l.done ? l.finalDown : l.curDown;
+    const showUp = l.done ? l.finalUp : l.curUp;
     return `<div class="leg ${l.done ? 'done' : ''} ${l.error ? 'err' : ''}">
       <span class="leg-name">${l.name || '#' + id}</span>
       <span class="leg-phase">${l.error ? 'error' : l.phase || '…'}</span>
-      <span>↓ ${fmt(l.down)}</span><span>↑ ${fmt(l.up)}</span>
+      <span>↓ ${fmt(showDown)}</span><span>↑ ${fmt(showUp)}</span>
     </div>`;
   }).join('');
   $('legs').innerHTML = rows;
-  $('agg-down').textContent = fmt(down);
-  $('agg-up').textContent = fmt(up);
+  // The honest aggregate: instantaneous rates summed at the same moment,
+  // tracked at their peak. Sums of per-leg averages double-count time
+  // windows where phases didn't overlap and can exceed the physical wire.
+  peakDown = Math.max(peakDown, down);
+  peakUp = Math.max(peakUp, up);
+  if (final) {
+    $('agg-down-label').textContent = '↓ peak concurrent';
+    $('agg-up-label').textContent = '↑ peak concurrent';
+    $('agg-down').textContent = fmt(peakDown);
+    $('agg-up').textContent = fmt(peakUp);
+  } else {
+    $('agg-down').textContent = fmt(down);
+    $('agg-up').textContent = fmt(up);
+  }
 }
 
 EventsOn('leg', (ev) => {
-  const l = legs.get(ev.id) || { down: 0, up: 0 };
+  const l = legs.get(ev.id) || { curDown: 0, curUp: 0, finalDown: 0, finalUp: 0 };
   if (ev.type === 'testStart' && ev.server) l.name = `${ev.server.name} (${ev.server.location})`;
-  if (ev.type === 'download') { l.down = gbps(ev.download.bandwidth); l.phase = 'download'; }
-  if (ev.type === 'upload') { l.up = gbps(ev.upload.bandwidth); l.phase = 'upload'; }
+  if (ev.type === 'download') { l.curDown = gbps(ev.download.bandwidth); l.phase = 'download'; }
+  if (ev.type === 'upload') {
+    l.curUp = gbps(ev.upload.bandwidth);
+    l.curDown = 0; // download phase over — stop counting it in the live sum
+    l.phase = 'upload';
+  }
   if (ev.type === 'result') {
-    l.down = gbps(ev.download.bandwidth); l.up = gbps(ev.upload.bandwidth);
+    l.finalDown = gbps(ev.download.bandwidth); l.finalUp = gbps(ev.upload.bandwidth);
+    l.curDown = 0; l.curUp = 0; // finished legs contribute nothing live
     l.done = true; l.phase = 'done';
   }
-  if (ev.type === 'error') { l.error = true; l.message = ev.message; }
+  if (ev.type === 'error') { l.error = true; l.message = ev.message; l.curDown = 0; l.curUp = 0; }
   legs.set(ev.id, l);
   renderLegs();
 });
@@ -152,11 +173,15 @@ EventsOn('leg', (ev) => {
 EventsOn('run:done', () => {
   $('run-btn').hidden = false;
   $('stop-btn').hidden = true;
+  renderLegs(true);
 });
 
 $('run-btn').onclick = async () => {
   legs.clear();
-  for (const id of selected.keys()) legs.set(id, { down: 0, up: 0, name: selected.get(id) });
+  peakDown = 0; peakUp = 0;
+  $('agg-down-label').textContent = '↓ live sum';
+  $('agg-up-label').textContent = '↑ live sum';
+  for (const id of selected.keys()) legs.set(id, { curDown: 0, curUp: 0, finalDown: 0, finalUp: 0, name: selected.get(id) });
   renderLegs();
   $('aggregate').hidden = false;
   $('run-note').hidden = false;
