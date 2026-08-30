@@ -8,7 +8,8 @@
 //
 // Usage:
 //
-//	aggst 57176 6214 10148
+//	aggst                  # auto-picks the 3 nearest servers
+//	aggst 57176 6214 10148 # explicit server ids
 //	aggst -list            # show nearby server ids
 package main
 
@@ -95,11 +96,42 @@ func bandwidth(section map[string]any) (float64, bool) {
 	return gbps(bw), ok
 }
 
+// nearestServers auto-picks the n closest servers from the CLI's list.
+func nearestServers(cli string, n int) ([]int, error) {
+	out, err := exec.Command(cli, "-L", "-f", "json", "--accept-license", "--accept-gdpr").Output()
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Servers []struct {
+			ID       int    `json:"id"`
+			Name     string `json:"name"`
+			Location string `json:"location"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, err
+	}
+	if len(parsed.Servers) == 0 {
+		return nil, fmt.Errorf("no servers returned")
+	}
+	var ids []int
+	for i, s := range parsed.Servers {
+		if i >= n {
+			break
+		}
+		ids = append(ids, s.ID)
+		fmt.Printf("  auto-picked %d — %s (%s)\n", s.ID, s.Name, s.Location)
+	}
+	return ids, nil
+}
+
 func main() {
 	list := flag.Bool("list", false, "list nearby servers and exit")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: aggst [-list] <server-id> [server-id ...]\n\n"+
+		fmt.Fprintf(os.Stderr, "usage: aggst [-list] [server-id ...]\n\n"+
 			"Runs parallel Ookla speedtests and reports the peak concurrent sum.\n"+
+			"With no ids, the 3 nearest servers are picked automatically.\n"+
 			"Pick 2-4 nearby servers (each leg moves multiple GB). Hardwired only.\n\n"+
 			"Uses Ookla's Speedtest CLI (downloaded from Ookla on first run);\n"+
 			"running it accepts Ookla's EULA, Terms of Use and Privacy Policy:\n"+
@@ -138,8 +170,11 @@ func main() {
 		ids = append(ids, id)
 	}
 	if len(ids) == 0 {
-		flag.Usage()
-		os.Exit(2)
+		var err error
+		if ids, err = nearestServers(cli, 3); err != nil {
+			fmt.Fprintln(os.Stderr, "auto-picking servers failed:", err)
+			os.Exit(1)
+		}
 	}
 
 	t := &tracker{down: map[int]float64{}, up: map[int]float64{}, finals: map[int]result{}}
