@@ -197,6 +197,4 @@ func main() {
 		}
 	}
 	fmt.Printf("\nPEAK CONCURRENT: down %.2f Gbps  up %.2f Gbps\n", t.peakDown, t.peakUp)
-	fmt.Println("(instantaneous cross-leg sums — cannot exceed the wire; this is what")
-	fmt.Println(" the line demonstrably carried at one real moment)")
 }
